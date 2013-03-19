@@ -1,69 +1,24 @@
-/**
- * TUNA FRAMEWORK
- *
- * Copyright (c) 2012, Sergey Kononenko
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- * * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- * * Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the distribution.
- * * Names of contributors may be used to endorse or promote products
- * derived from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL SERGEY KONONENKO BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
-
-
-if (typeof util === 'undefined' ||
-    typeof util.dom === 'undefined' ||
-    typeof util.VERSION === 'undefined') {
-  throw Error('Tuna "util" library must exists.');
-}
-
-if (typeof events === 'undefined') {
-  throw Error('Tuna "events" library must exists.');
-}
-'use strict';var net = {};
-net.VERSION = "0.0.1";
-net.CAN_USE_CORS = window["XMLHttpRequest"] !== undefined && (new window["XMLHttpRequest"])["withCredentials"] !== undefined;
-net.__CURRENT_URL = location.protocol + "//" + location.host + "/";
+var net = {};
+net.factory = {};
+net.CAN_USE_CORS = window["XMLHttpRequest"] !== undefined && (new XMLHttpRequest)["withCredentials"] !== undefined;
 net.createRequest = function(opt_hostOrUrl, opt_isSecure, opt_port, opt_needResult) {
-  var url = net.makeUrl(opt_hostOrUrl, opt_isSecure, opt_port);
-  if(net.CAN_USE_CORS || url.indexOf(net.__CURRENT_URL) === 0) {
-    return new net.XhrRequest(url)
-  }
-  if(opt_needResult === undefined ? true : opt_needResult) {
-    return new net.JsonpRequest(url)
-  }
-  return new net.FormRequest(url)
+  return(new net.factory.RequestFactory(opt_hostOrUrl, opt_isSecure, opt_port)).createRequest(opt_needResult)
 };
 net.createSocket = function(opt_hostOrUrl, opt_isSecure, opt_port) {
-  var url = net.makeUrl(opt_hostOrUrl, opt_isSecure, opt_port, "ws");
-  if(window["WebSocket"] !== undefined) {
-    return new WebSocket(url)
-  }else {
-    if(window["MozWebSocket"] !== undefined) {
-      return new window["MozWebSocket"](url)
-    }
-  }
-  return null
+  return(new net.factory.SocketFactory(opt_hostOrUrl, opt_isSecure, opt_port)).createSocket()
 };
 net.makeUrl = function(opt_hostOrUrl, opt_isSecure, opt_port, opt_protocol) {
-  if(opt_hostOrUrl.indexOf("://") !== -1) {
-    return opt_hostOrUrl
+  if(opt_hostOrUrl !== undefined) {
+    if(opt_hostOrUrl.indexOf("://") !== -1) {
+      return opt_hostOrUrl
+    }
+    if(opt_hostOrUrl.indexOf("//") === 0) {
+      if(opt_protocol !== undefined) {
+        return opt_protocol + ":" + opt_hostOrUrl
+      }else {
+        return opt_hostOrUrl
+      }
+    }
   }
   var host = opt_hostOrUrl || location.hostname;
   var isSecure = opt_isSecure || location.protocol === "https:";
@@ -77,100 +32,153 @@ net.makeUrl = function(opt_hostOrUrl, opt_isSecure, opt_port, opt_protocol) {
   }
   return url
 };
-net.RequestData = function(status, data) {
-  this.__status = status;
-  this.__data = data
+net.RequestMethod = {GET:"GET", POST:"POST"};
+net.RequestEvent = function(target, type, responseStatus) {
+  events.Event.call(this, target, type);
+  this.__responseStatus = responseStatus
 };
-net.RequestData.prototype.getStatus = function() {
-  return this.__status
-};
-net.RequestData.prototype.getData = function() {
-  return this.__data
+util.inherits(net.RequestEvent, events.Event);
+net.RequestEvent.COMPLETE = "complete";
+net.RequestEvent.prototype.getResponseStatus = function() {
+  return this.__responseStatus
 };
 net.Request = function(url) {
   events.EventDispatcher.call(this);
   this.__url = url.charAt(url.length - 1) === "/" ? url : url + "/";
+  this.__method = net.RequestMethod.GET;
   this.__sendQueue = [];
-  this.__method = net.Request.METHOD_GET
+  this.__flush = util.bind(this.__flush, this)
 };
 util.inherits(net.Request, events.EventDispatcher);
-net.Request.METHOD_GET = "GET";
-net.Request.METHOD_POST = "POST";
-net.Request.prototype.getMethod = function() {
-  return this.__method
+net.Request.prototype.getUrl = function() {
+  return this.__url
 };
 net.Request.prototype.setMethod = function(method) {
   this.__method = method
 };
-net.Request.prototype.getUrl = function() {
-  return this.__url
+net.Request.prototype.getMethod = function() {
+  return this.__method
 };
-net.Request.prototype.send = function(opt_path, opt_data) {
+net.Request.prototype.send = function(data, opt_path) {
   if(opt_path === undefined) {
-    arguments[0] = ""
+    arguments[1] = ""
   }else {
     if(opt_path.charAt(0) === "/") {
-      arguments[0] = opt_path.substr(1)
+      arguments[1] = opt_path.substr(1)
     }
   }
   this.__sendQueue.push(arguments);
-  this._process()
+  util.async(this.__flush)
 };
-net.Request.prototype.abort = function() {
+net.Request.prototype.cancel = function() {
   this.__sendQueue.length = 0
 };
-net.Request.prototype._process = function() {
-  if(this._canSend()) {
-    while(this.__sendQueue.length > 0) {
-      this._doSend.apply(this, this.__sendQueue.shift())
-    }
+net.Request.prototype.abort = function() {
+  if(!this._canSend()) {
+    this._handleResult(0)
   }
 };
 net.Request.prototype._canSend = function() {
   return false
 };
-net.Request.prototype._doSend = function(path, opt_data) {
+net.Request.prototype._doSend = function(data, path) {
+};
+net.Request.prototype._handleResult = function(status, opt_data) {
+  this._reset();
+  util.async(this.__flush);
+  this.dispatch(new net.RequestEvent(this, net.RequestEvent.COMPLETE, status), opt_data)
+};
+net.Request.prototype._reset = function() {
+};
+net.Request.prototype.__flush = function() {
+  while(this._canSend() && this.__sendQueue.length > 0) {
+    this._doSend.apply(this, this.__sendQueue.shift())
+  }
+};
+net.XhrRequest = function(url) {
+  net.Request.call(this, url);
+  this.__request = null
+};
+util.inherits(net.XhrRequest, net.Request);
+net.XhrRequest.prototype._canSend = function() {
+  return this.__request === null
+};
+net.XhrRequest.prototype._doSend = function(data, path) {
+  this.__request = this.__createRequest();
+  if(this.__request !== null) {
+    var method = this.getMethod();
+    var self = this;
+    this.__request.onreadystatechange = function() {
+      if(self.__request !== null && self.__request.readyState === 4) {
+        var data = self.__request.responseText || "";
+        var status = self.__request.status || 500;
+        if(status === 1223) {
+          status = 204
+        }
+        self._handleResult(status, data)
+      }
+    };
+    var requestURL = this.getUrl() + path;
+    if(method === net.RequestMethod.GET && data.length !== 0) {
+      requestURL += (requestURL.indexOf("?") === -1 ? "?" : "&") + data
+    }
+    this.__request.open(method, encodeURI(requestURL), true);
+    var sendData = null;
+    if(method !== net.RequestMethod.GET) {
+      this.__request.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+      sendData = data
+    }else {
+      this.__request.setRequestHeader("Content-Type", "text/plain")
+    }
+    try {
+      this.__request.send(sendData)
+    }catch(error) {
+      console.error(error.message);
+      this._handleResult(500)
+    }
+  }else {
+    console.error("Unable to create instance of XMLHttpRequest.");
+    this._handleResult(500)
+  }
+};
+net.XhrRequest.prototype._reset = function() {
+  if(this.__request !== null) {
+    this.__request.onreadystatechange = util.nop;
+    this.__request.abort();
+    this.__request = null
+  }
+};
+net.XhrRequest.prototype.__createRequest = function() {
+  if(window["XMLHttpRequest"] !== undefined) {
+    return new XMLHttpRequest
+  }
+  if(window["ActiveXObject"] !== undefined) {
+    return new ActiveXObject("Microsoft.XMLHTTP")
+  }
+  return null
 };
 net.JsonpRequest = function(url) {
   net.Request.call(this, url);
-  this.__id = net.JsonpRequest.ID_PREFIX + (net.JsonpRequest.__lastId += 1);
-  this.__script = null
+  this.__id = "jspr_" + net.JsonpRequest.__lastId++;
+  this.__script = null;
+  this.__timeout = -1
 };
 util.inherits(net.JsonpRequest, net.Request);
 net.JsonpRequest.__lastId = 0;
-net.JsonpRequest.ID_PREFIX = "jspr_";
 net.JsonpRequest.ERROR_TIMEOUT = 3E4;
 net.JsonpRequest.CALLBACK_TABLE = "__jsonp";
-net.JsonpRequest.prototype.abort = function() {
-  net.Request.prototype.abort.call(this);
-  if(this.__script !== null) {
-    window[net.JsonpRequest.CALLBACK_TABLE][this.__id](0)
-  }
-};
 net.JsonpRequest.prototype._canSend = function() {
   return this.__script === null
 };
-net.JsonpRequest.prototype._doSend = function(path, opt_data) {
+net.JsonpRequest.prototype._doSend = function(data, path) {
   var requestURL = this.getUrl() + path;
-  var metaData = {"__m":this.getMethod(), "__c":net.JsonpRequest.CALLBACK_TABLE + '["' + this.__id + '"]'};
   if(requestURL.indexOf("?") === -1) {
     requestURL += "?"
   }
-  if(opt_data instanceof Object) {
-    requestURL += util.encodeFormData(opt_data)
-  }else {
-    if(opt_data !== undefined) {
-      metaData["__p"] = opt_data
-    }
-  }
-  requestURL += "&__&" + util.encodeFormData(metaData);
+  requestURL += util.encodeFormData({"__m":this.getMethod(), "__c":net.JsonpRequest.CALLBACK_TABLE + '["' + this.__id + '"]', "__p":data || undefined}) + "&jsonp";
   var self = this;
-  var timeout = -1;
   function callback(opt_status, opt_data) {
-    var status = opt_status === undefined ? 404 : opt_status;
-    var data = opt_data || "";
-    clearTimeout(timeout);
-    self.__handleResult(status, data)
+    self._handleResult(opt_status === undefined ? 404 : 0, opt_data)
   }
   if(window[net.JsonpRequest.CALLBACK_TABLE] === undefined) {
     window[net.JsonpRequest.CALLBACK_TABLE] = {}
@@ -187,91 +195,20 @@ net.JsonpRequest.prototype._doSend = function(path, opt_data) {
   this.__script.onload = function() {
     callback()
   };
-  timeout = setTimeout(callback, net.JsonpRequest.ERROR_TIMEOUT);
+  this.__timeout = setTimeout(callback, net.JsonpRequest.ERROR_TIMEOUT);
   document.body.appendChild(this.__script)
 };
-net.JsonpRequest.prototype.__handleResult = function(status, data) {
-  this.__script.onreadystatechange = util.nop;
-  this.__script.onload = util.nop;
-  document.body.removeChild(this.__script);
-  this.__script = null;
-  delete window[net.JsonpRequest.CALLBACK_TABLE][this.__id];
-  if(status !== 0) {
-    this._process();
-    this.dispatch("complete", new net.RequestData(status, data))
+net.JsonpRequest.prototype._reset = function() {
+  if(this.__timeout !== -1) {
+    clearTimeout(this.__timeout)
   }
-};
-net.XhrRequest = function(url) {
-  net.Request.call(this, url);
-  var self = this;
-  this.__request = null;
-  this.__handleReadyStateChange = function() {
-    if(self.__request !== null && self.__request.readyState === 4) {
-      self.__handleResult()
-    }
+  if(this.__script !== null) {
+    this.__script.onreadystatechange = util.nop;
+    this.__script.onload = util.nop;
+    document.body.removeChild(this.__script);
+    delete window[net.JsonpRequest.CALLBACK_TABLE][this.__script.id];
+    this.__script = null
   }
-};
-util.inherits(net.XhrRequest, net.Request);
-net.XhrRequest.prototype.abort = function() {
-  net.Request.prototype.abort.call(this);
-  if(this.__request !== null) {
-    this.__request.onreadystatechange = util.nop;
-    this.__request.abort();
-    this.__request = null
-  }
-};
-net.XhrRequest.prototype._canSend = function() {
-  return this.__request === null
-};
-net.XhrRequest.prototype._doSend = function(path, opt_data) {
-  this.__request = this.__createRequest();
-  if(this.__request !== null) {
-    var sendData = null;
-    var requestURL = this.getUrl() + path;
-    var requestMethod = this.getMethod();
-    var dataString = "";
-    if(opt_data instanceof Object) {
-      dataString += util.encodeFormData(opt_data)
-    }else {
-      if(opt_data !== undefined) {
-        dataString += opt_data
-      }
-    }
-    if(requestMethod === net.Request.METHOD_GET && dataString !== "") {
-      requestURL += (requestURL.indexOf("?") === -1 ? "?" : "&") + dataString
-    }
-    this.__request.onreadystatechange = this.__handleReadyStateChange;
-    this.__request.open(requestMethod, encodeURI(requestURL), true);
-    if(requestMethod !== net.Request.METHOD_GET) {
-      this.__request.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-      sendData = dataString
-    }else {
-      this.__request.setRequestHeader("Content-Type", "text/plain")
-    }
-    this.__request.send(sendData)
-  }else {
-    console.error("Can't create native XMLHttpRequest.")
-  }
-};
-net.XhrRequest.prototype.__handleResult = function() {
-  var status = this.__request.status || 500;
-  if(status === 1223) {
-    status = 204
-  }
-  var data = this.__request.responseText || "";
-  this.__request.onreadystatechange = util.nop;
-  this.__request = null;
-  this._process();
-  this.dispatch("complete", new net.RequestData(status, data))
-};
-net.XhrRequest.prototype.__createRequest = function() {
-  if(window["XMLHttpRequest"] !== undefined) {
-    return new XMLHttpRequest
-  }
-  if(window["ActiveXObject"] !== undefined) {
-    return new ActiveXObject("Microsoft.XMLHTTP")
-  }
-  return null
 };
 net.FormRequest = function(url) {
   net.Request.call(this, url);
@@ -286,47 +223,27 @@ net.FormRequest.FRAME_PREFIX = "fr_";
 net.FormRequest.prototype._canSend = function() {
   return this.__form === null
 };
-net.FormRequest.prototype.abort = function() {
-  net.Request.prototype.abort.call(this);
-  this.__clearRequest()
-};
 net.FormRequest.prototype._doSend = function(path, opt_data) {
   this.__form = document.body.appendChild(document.createElement("FORM"));
   this.__form.style.display = "none";
   this.__form.method = this.getMethod();
   this.__form.action = this.getUrl() + path;
   this.__form.target = this.__frame.name;
-  var inputs = [];
-  if(opt_data instanceof Object) {
-    var tokens = util.tokenizeUrlData(opt_data);
-    while(tokens.length > 0) {
-      inputs.push(this.__createInput(tokens.shift()))
-    }
-  }else {
-    if(opt_data !== undefined) {
-      inputs.push(this.__createInput("_=" + opt_data))
-    }
-  }
-  while(inputs.length > 0) {
-    this.__form.appendChild(inputs.shift())
+  if(opt_data !== undefined) {
+    this.__form.appendChild(this.__createInput("_=" + opt_data))
   }
   var self = this;
   this.__frame.onreadystatechange = function() {
     if(self.__frame.readyState === "complete" || self.__frame.readyState === "loaded") {
-      self.__handleResult()
+      self._handleResult(200)
     }
   };
   this.__frame.onload = function() {
-    self.__handleResult()
+    self._handleResult(200)
   };
   this.__form.submit()
 };
-net.FormRequest.prototype.__handleResult = function() {
-  this.__clearRequest();
-  this.dispatch("complete", new net.RequestData(200, ""));
-  this._process()
-};
-net.FormRequest.prototype.__clearRequest = function() {
+net.FormRequest.prototype._reset = function() {
   this.__frame.onreadystatechange = util.nop;
   this.__frame.onload = util.nop;
   if(this.__form !== null) {
@@ -351,5 +268,42 @@ net.FormRequest.prototype.__createFrame = function() {
     frame.name = name;
     return frame
   }
+};
+net.factory.IRequestFactory = function() {
+};
+net.factory.IRequestFactory.prototype.createRequest = function(opt_needResult) {
+};
+net.factory.ISocketFactory = function() {
+};
+net.factory.ISocketFactory.prototype.createSocket = function() {
+};
+net.factory.RequestFactory = function(opt_hostOrUrl, opt_isSecure, opt_port) {
+  this.__url = net.makeUrl(opt_hostOrUrl, opt_isSecure, opt_port);
+  this.__sameDomain = this.__url.indexOf(location.protocol + "//" + location.host + "/") === 0
+};
+net.factory.RequestFactory.prototype.createRequest = function(opt_needResult) {
+  if(this.__sameDomain || net.CAN_USE_CORS) {
+    return new net.XhrRequest(this.__url)
+  }
+  if(opt_needResult === undefined || opt_needResult) {
+    return new net.JsonpRequest(this.__url)
+  }
+  return new net.FormRequest(this.__url)
+};
+net.factory.SocketFactory = function(opt_hostOrUrl, opt_isSecure, opt_port) {
+  this.__url = net.makeUrl(opt_hostOrUrl, opt_isSecure, opt_port, "ws")
+};
+net.factory.SocketFactory.prototype.createSocket = function() {
+  try {
+    if(window["WebSocket"] !== undefined) {
+      return new WebSocket(this.__url)
+    }else {
+      if(window["MozWebSocket"] !== undefined) {
+        return new window["MozWebSocket"](this.__url)
+      }
+    }
+  }catch(error) {
+  }
+  return null
 };
 
