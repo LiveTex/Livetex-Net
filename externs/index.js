@@ -39,7 +39,19 @@ net.factory = {};
 /**
  * @type {boolean}
  */
-net.CAN_USE_CORS = true;
+net.CAN_USE_CORS = (window['XMLHttpRequest'] !== undefined) &&
+    ((new XMLHttpRequest())['withCredentials'] !== undefined);
+
+/**
+ * @type {boolean}
+ */
+net.CAN_SAVE_COOKIE = !navigator.userAgent.match(
+    /Mozilla\/5.0.+AppleWebKit\/.+Version\/.+Safari\/|Trident|Presto/i);
+
+/**
+ * @type {string}
+ */
+net.CHARSET_ENCODING = 'UTF-8';
 
 /**
  * @param {string=} opt_hostOrUrl Хост либо адрес.
@@ -68,6 +80,12 @@ net.createSocket = function(opt_hostOrUrl, opt_isSecure, opt_port) {};
  * @return {string} Скомпонованная строка адреса.
  */
 net.makeUrl = function(opt_hostOrUrl, opt_isSecure, opt_port, opt_protocol) {};
+
+/**
+ * @param {!Object.<string, string>=} headers Заголовки запроса.
+ * @return {string} Закодированные заголовки для GET строки.
+ */
+net.encodeHeadersFallback = function(headers) {};
 
 /**
  * TUNA FRAMEWORK
@@ -144,8 +162,9 @@ net.RequestMethod = {
  *        произошло.
  * @param {string} type Тип события.
  * @param {number} responseStatus HTTP-статус ответа.
+ * @param {string=} opt_data Данные ответа.
  */
-net.RequestEvent = function(target, type, responseStatus) {};
+net.RequestEvent = function(target, type, responseStatus, opt_data) {};
 
 /**
  * @type {string}
@@ -153,9 +172,34 @@ net.RequestEvent = function(target, type, responseStatus) {};
 net.RequestEvent.COMPLETE = 'complete';
 
 /**
+ * @return {string} Данные ответа.
+ */
+net.RequestEvent.prototype.getResponseData = function() {};
+
+/**
  * @return {number} HTTP-статус ответа.
  */
 net.RequestEvent.prototype.getResponseStatus = function() {};
+
+/**
+ * @return {boolean} Была ли ошибка запроса.
+ */
+net.RequestEvent.prototype.isRequestFailed = function() {};
+
+/**
+ * @return {boolean} Была ли ошибка запроса.
+ */
+net.RequestEvent.prototype.isRequestFailLocal = function() {};
+
+/**
+ * @return {boolean} Была ли ошибка запроса.
+ */
+net.RequestEvent.prototype.isRequestTimeout = function() {};
+
+/**
+ * @return {boolean} Была ли ошибка запроса.
+ */
+net.RequestEvent.prototype.isRequestForbidden = function() {};
 
 /**
  * TUNA FRAMEWORK
@@ -200,6 +244,11 @@ net.RequestEvent.prototype.getResponseStatus = function() {};
 net.Request = function(url) {};
 
 /**
+ * @param {number} timeout Максимальное время запроса.
+ */
+net.Request.prototype.setTimeoutTime = function(timeout) {};
+
+/**
  * @return {string} Базовый адрес запроса.
  */
 net.Request.prototype.getUrl = function() {};
@@ -213,6 +262,33 @@ net.Request.prototype.setMethod = function(method) {};
  * @return {!net.RequestMethod} Тип метода запроса.
  */
 net.Request.prototype.getMethod = function() {};
+
+/**
+ * @param {!Object.<string, string>} headers Значение.
+ */
+net.Request.prototype.setHeaders = function(headers) {};
+
+/**
+ * @return {!Object.<string, string>} Заголовки.
+ */
+net.Request.prototype.getHeaders = function() {};
+
+/**
+ * @param {string} key Ключ.
+ * @param {string} value Значение.
+ */
+net.Request.prototype.setHeader = function(key, value) {};
+
+/**
+ * @param {string} key Ключ.
+ * @return {string} Значение.
+ */
+net.Request.prototype.getHeader = function(key) {};
+
+/**
+ * @param {string} key Ключ.
+ */
+net.Request.prototype.removeHeader = function(key) {};
 
 /**
  * Отсылка запроса.
@@ -242,7 +318,7 @@ net.Request.prototype.abort = function() {};
  *
  * @return {boolean} Результат проверки.
  */
-net.Request.prototype._canSend = function() {};
+net.Request.prototype._isRunning = function() {};
 
 /**
  * Конкретная реализация отправки запроса.
@@ -300,13 +376,14 @@ net.Request.prototype._reset = function() {};
  * @constructor
  * @extends {net.Request}
  * @param {string} url Базовый адрес запроса.
+ * @param {boolean=} opt_useCors Использовать ли кроссдоменные куки.
  */
-net.XhrRequest = function(url) {};
+net.XhrRequest = function(url, opt_useCors) {};
 
 /**
  * @inheritDoc
  */
-net.XhrRequest.prototype._canSend = function() {};
+net.XhrRequest.prototype._isRunning = function() {};
 
 /**
  * @inheritDoc
@@ -366,7 +443,7 @@ net.JsonpRequest.CALLBACK_TABLE = '__jsonp';
 /**
  * @inheritDoc
  */
-net.JsonpRequest.prototype._canSend = function() {};
+net.JsonpRequest.prototype._isRunning = function() {};
 
 /**
  * @inheritDoc
@@ -414,19 +491,14 @@ net.JsonpRequest.prototype._reset = function() {};
 net.FormRequest = function(url) {};
 
 /**
- * @type {string}
+ * @inheritDoc
  */
-net.FormRequest.FRAME_PREFIX = 'fr_';
+net.FormRequest.prototype._isRunning = function() {};
 
 /**
  * @inheritDoc
  */
-net.FormRequest.prototype._canSend = function() {};
-
-/**
- * @inheritDoc
- */
-net.FormRequest.prototype._doSend = function(path, opt_data) {};
+net.FormRequest.prototype._doSend = function(data, path) {};
 
 /**
  * @inheritDoc
@@ -467,6 +539,22 @@ net.FormRequest.prototype._reset = function() {};
  * @interface
  */
 net.factory.IRequestFactory = function() {};
+
+/**
+ * @param {!net.RequestMethod} method Тип метода запроса.
+ */
+net.factory.IRequestFactory.prototype.setMethod = function(method) {};
+
+/**
+ * @param {!Object.<string, string>} headers Заголовки запроса.
+ */
+net.factory.IRequestFactory.prototype.setHeaders = function(headers) {};
+
+/**
+ * @param {string} key Ключ.
+ * @param {string} value Значение.
+ */
+net.factory.IRequestFactory.prototype.setHeader = function(key, value) {};
 
 /**
  * Создание HTTP-запроса.
@@ -512,6 +600,17 @@ net.factory.IRequestFactory.prototype.createRequest =
  * @interface
  */
 net.factory.ISocketFactory = function() {};
+
+/**
+ * @param {string} key Ключ.
+ * @param {string} value Значение.
+ */
+net.factory.ISocketFactory.prototype.setHeader = function(key, value) {};
+
+/**
+ * @param {!Object.<string, string>} headers Заголовки запроса.
+ */
+net.factory.ISocketFactory.prototype.setHeaders = function(headers) {};
 
 /**
  * Создание постоянного соединения.
@@ -565,6 +664,21 @@ net.factory.RequestFactory = function(opt_hostOrUrl, opt_isSecure, opt_port) {};
 net.factory.RequestFactory.prototype.createRequest = function(opt_needResult) {};
 
 /**
+ * @inheritDoc
+ */
+net.factory.RequestFactory.prototype.setMethod = function(method) {};
+
+/**
+ * @inheritDoc
+ */
+net.factory.RequestFactory.prototype.setHeaders = function(headers) {};
+
+/**
+ * @inheritDoc
+ */
+net.factory.RequestFactory.prototype.setHeader = function(key, value) {};
+
+/**
  * TUNA FRAMEWORK
  *
  * Copyright (c) 2012, Sergey Kononenko
@@ -602,6 +716,16 @@ net.factory.RequestFactory.prototype.createRequest = function(opt_needResult) {}
  * @param {number=} opt_port Порт.
  */
 net.factory.SocketFactory = function(opt_hostOrUrl, opt_isSecure, opt_port) {};
+
+/**
+ * @inheritDoc
+ */
+net.factory.SocketFactory.prototype.setHeaders = function(headers) {};
+
+/**
+ * @inheritDoc
+ */
+net.factory.SocketFactory.prototype.setHeader = function(key, value) {};
 
 /**
  * @inheritDoc
