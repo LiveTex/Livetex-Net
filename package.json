@@ -1,0 +1,9 @@
+{
+  "name": "web-net",
+  "main": "bin/index.js",
+  "version": "0.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LiveTex/Livetex-Net.git"
+  }
+}
